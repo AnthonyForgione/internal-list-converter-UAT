@@ -1,57 +1,79 @@
+/* Import Google Font */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap');
+
 body {
-    font-family: Arial, sans-serif;
-    background: #f7f7f7;
-    padding: 40px;
+    font-family: 'Roboto', sans-serif;
+    background-color: #f5f7fa;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 40px 20px;
+    color: #333;
 }
 
 .container {
-    max-width: 650px;
-    margin: auto;
-    padding: 20px;
-    background: white;
+    background: #fff;
+    padding: 30px 40px;
     border-radius: 12px;
-    box-shadow: 0 0 15px rgba(0,0,0,0.1);
-    text-align: center;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    max-width: 600px;
+    width: 100%;
 }
 
-h1 {
+h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #2c3e50;
+}
+
+input[type="file"] {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+
+button#convertBtn {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    background-color: #3498db;
+    color: #fff;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s;
     margin-bottom: 20px;
 }
 
-#fileInput {
-    margin: 20px 0;
+button#convertBtn:hover {
+    background-color: #2980b9;
 }
 
-#convertBtn {
-    padding: 10px 20px;
-    background: #007bff;
-    border: none;
-    color: white;
-    border-radius: 6px;
-    cursor: pointer;
-}
-
-#convertBtn:hover {
-    background: #0056b3;
-}
-
-#output {
-    margin-top: 20px;
-    text-align: left;
-    background: #eee;
+pre#output {
+    background-color: #f0f3f7;
     padding: 15px;
-    border-radius: 8px;
+    border-radius: 6px;
     max-height: 300px;
-    overflow-y: auto;
+    overflow: auto;
     white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 14px;
 }
 
-#downloadLink {
-    margin-top: 20px;
-    display: inline-block;
-    background: green;
-    color: white;
-    padding: 10px 15px;
-    border-radius: 6px;
+a#downloadLink {
+    display: block;
+    text-align: center;
+    margin-top: 15px;
+    color: #3498db;
     text-decoration: none;
+    font-weight: 500;
+}
+
+a#downloadLink:hover {
+    text-decoration: underline;
 }
