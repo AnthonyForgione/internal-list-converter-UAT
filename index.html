@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title> ASAM Client Import Converter <br> XLS → JSONL</title>
+  <title>ASAM Client Import Converter | XLS → JSONL</title>
   
   <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
@@ -17,13 +17,20 @@
 
   <div class="container">
     <h2>ASAM Client Import Converter <br> XLS → JSONL</h2>
-    <input type="file" id="fileInput" accept=".xls,.xlsx">
-    <button id="convertBtn" type="button">Convert</button>
-    <pre id="output"></pre>
-    <a id="downloadLink" style="display:none;">Download JSONL</a>
-  </div>
 
-  <!-- Link your JS -->
-  <script src="script.js"></script>
-</body>
-</html>
+    <!-- Instructions -->
+    <div class="instructions">
+      <p>
+        <span class="mandatory">Mandatory fields</span> are highlighted in orange.<br>
+        <span class="person-only">Fields only for entity type "Person"</span> are in green.<br>
+        <span class="common">White fields</span> are either common non-mandatory fields or for entity type "Organisation".
+      </p>
+    </div>
+
+    <!-- Template download -->
+    <a id="templateLink" href="Simplified_Client_Import_Template.xlsx" download>
+      Download Simplified Client Import Template
+    </a>
+
+    <!-- File input and convert button -->
+    <input typ
