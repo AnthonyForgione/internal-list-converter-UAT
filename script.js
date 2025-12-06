@@ -1,356 +1,303 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const uploadForm = document.getElementById('upload-form');
-    const fileInput = document.getElementById('excel-file');
-    const downloadLink = document.getElementById('download-link');
-    const statusMessage = document.getElementById('status-message');
+// script.js
+// Browser-side XLS/XLSX -> JSONL converter adapted from the user's Python logic.
+// Requires SheetJS (xlsx.full.min.js) loaded in index.html.
 
-    if (uploadForm) {
-        uploadForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            statusMessage.textContent = 'Processing file... Please wait.';
-            statusMessage.style.color = 'blue';
-            downloadLink.style.display = 'none';
+(function () {
+  // Utility helpers
+  function isEmpty(value) {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'number' && isNaN(value)) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') {
+      // if it's a Date and invalid
+      if (value instanceof Date) return isNaN(value.getTime());
+      // treat empty object as empty
+      return Object.keys(value).length === 0;
+    }
+    return false;
+  }
 
-            const file = fileInput.files[0];
-            if (!file) {
-                statusMessage.textContent = 'Please select an Excel file.';
-                statusMessage.style.color = 'red';
-                return;
-            }
+  function _to_string_id(value) {
+    if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+    if (value instanceof Date) return String(value.valueOf());
+    return String(value);
+  }
 
-            try {
-                const data = await readFile(file);
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                const jsonSheet = XLSX.utils.sheet_to_json(worksheet);
+  function _to_string_list(value) {
+    if (isEmpty(value)) return null;
+    if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+    if (typeof value === 'string') {
+      return value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return [String(value)];
+  }
 
-                const transformedData = processExcelData(jsonSheet);
+  function _to_unix_timestamp_ms(value) {
+    if (isEmpty(value)) return null;
+    // If it's already a Date object
+    if (value instanceof Date) {
+      if (isNaN(value.getTime())) return null;
+      return value.getTime();
+    }
+    // If it's an Excel serial number (SheetJS might give numbers for dates)
+    if (typeof value === 'number') {
+      // Heuristic: treat as Excel serial if it's reasonably large/small? Safer to attempt Date from value if not.
+      // But do not try to convert number blindly. We'll convert numeric -> Date via JS Date if it looks like epoch seconds/millis.
+      // If > 1e12 treat as ms epoch; if between 1e9 and 1e12 treat as seconds -> ms
+      if (value > 1e12) return Math.floor(value); // already ms
+      if (value > 1e9) return Math.floor(value * 1000); // seconds -> ms
+      // Otherwise treat as Excel serial: SheetJS often returns JS Date if cellDates:true; so rarely here.
+    }
+    // Try parsing string with Date
+    const parsed = Date.parse(String(value));
+    if (!isNaN(parsed)) return parsed;
+    return null;
+  }
 
-                if (transformedData.length === 0) {
-                    statusMessage.textContent = 'No valid data found to transform. Please check your Excel file.';
-                    statusMessage.style.color = 'orange';
-                    return;
-                }
+  // normalize header keys: remove quotes, trim whitespace
+  function normalizeKey(k) {
+    if (k === undefined || k === null) return '';
+    return String(k).replace(/^"+|"+$/g, '').trim();
+  }
 
-                const jsonlContent = transformedData.map(record => JSON.stringify(record)).join('\n');
-                const outputFilename = file.name.split('.').slice(0, -1).join('.') + '.jsonl';
+  function normalizeRowKeys(row) {
+    const out = {};
+    for (const [k, v] of Object.entries(row)) {
+      out[normalizeKey(k)] = v;
+    }
+    return out;
+  }
 
-                const blob = new Blob([jsonlContent], { type: 'application/jsonl' });
-                const url = URL.createObjectURL(blob);
+  // Main row transformer (mirrors the Python transform_row_to_client_json)
+  function transformRowToClientJson(rowRaw) {
+    const row = normalizeRowKeys(rowRaw);
+    const clientData = {};
+    clientData.objectType = 'client';
 
-                downloadLink.href = url;
-                downloadLink.download = outputFilename;
-                downloadLink.textContent = `Download ${outputFilename}`;
-                downloadLink.style.display = 'block';
-
-                statusMessage.textContent = 'File successfully processed! Click the download link.';
-                statusMessage.style.color = 'green';
-
-            } catch (error) {
-                console.error('Error processing file:', error);
-                statusMessage.textContent = `Error processing file: ${error.message}`;
-                statusMessage.style.color = 'red';
-            }
-        });
+    function addFieldIfNotEmpty(key, value) {
+      if (!isEmpty(value)) clientData[key] = value;
     }
 
-    function readFile(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = (e) => reject(e);
-            reader.readAsBinaryString(file);
-        });
+    function maybeString(v) {
+      if (v === null || v === undefined) return v;
+      return String(v);
     }
 
-    function is_empty(value) {
-        if (value === null || typeof value === 'undefined') {
-            return true;
-        }
-        if (typeof value === 'number' && isNaN(value)) {
-            return true;
-        }
-        if (typeof value === 'string') {
-            return value.trim() === '';
-        }
-        if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
-            return Object.keys(value).length === 0;
-        }
-        return false;
+    // read primary fields
+    addFieldIfNotEmpty('clientId', row['clientId']);
+    addFieldIfNotEmpty('entityType', row['entityType']);
+    addFieldIfNotEmpty('status', row['status']);
+
+    let entityTypeUpper = null;
+    if (!isEmpty(row['entityType'])) {
+      entityTypeUpper = String(row['entityType']).toUpperCase();
     }
 
-    function _to_string_id(value) {
-        if (typeof value === 'number' && !isNaN(value) && value % 1 === 0) {
-            return String(parseInt(value));
-        }
-        return String(value);
+    // 2. Name fields
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      addFieldIfNotEmpty('companyName', row['name']);
+    } else if (entityTypeUpper === 'PERSON') {
+      addFieldIfNotEmpty('name', row['name']);
+      addFieldIfNotEmpty('forename', row['forename']);
+      addFieldIfNotEmpty('middlename', row['middlename']);
+      addFieldIfNotEmpty('surname', row['surname']);
+    } else {
+      // fallback
+      addFieldIfNotEmpty('name', row['name']);
+      addFieldIfNotEmpty('forename', row['forename']);
+      addFieldIfNotEmpty('middlename', row['middlename']);
+      addFieldIfNotEmpty('surname', row['surname']);
     }
 
-    function _to_string_list(value) {
-        if (is_empty(value)) {
-            return null;
-        }
-        if (typeof value === 'string') {
-            return value.split(',').map(item => item.trim()).filter(item => item !== '');
-        }
-        return [String(value)];
+    // Common fields
+    addFieldIfNotEmpty('titles', row['titles']);
+    addFieldIfNotEmpty('suffixes', row['suffixes']);
+
+    // Person-specific
+    if (entityTypeUpper === 'PERSON') {
+      let genderValue = row['gender'];
+      if (typeof genderValue === 'string' && !isEmpty(genderValue)) genderValue = genderValue.toUpperCase();
+      addFieldIfNotEmpty('gender', genderValue);
+
+      const dob = row['dateOfBirth'];
+      addFieldIfNotEmpty('dateOfBirth', isEmpty(dob) ? dob : String(dob));
+
+      addFieldIfNotEmpty('birthPlaceCountryCode', row['birthPlaceCountryCode']);
+
+      const deceasedOn = row['deceasedOn'];
+      addFieldIfNotEmpty('deceasedOn', isEmpty(deceasedOn) ? deceasedOn : String(deceasedOn));
+
+      addFieldIfNotEmpty('occupation', row['occupation']);
+      addFieldIfNotEmpty('domicileCodes', _to_string_list(row['domicileCodes']));
+      addFieldIfNotEmpty('nationalityCodes', _to_string_list(row['nationalityCodes']));
     }
 
-    function _to_unix_timestamp_ms(value) {
-        if (is_empty(value)) {
-            return null;
-        }
-        try {
-            const date = new Date(value);
-            if (isNaN(date.getTime())) {
-                return null;
-            }
-            return date.getTime();
-        } catch (e) {
-            return null;
-        }
+    // Organisation-specific
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      addFieldIfNotEmpty('incorporationCountryCode', row['incorporationCountryCode']);
+      const doi = row['dateOfIncorporation'];
+      addFieldIfNotEmpty('dateOfIncorporation', isEmpty(doi) ? doi : String(doi));
     }
 
-    function processExcelData(jsonData) {
-        const transformedData = [];
-        for (const row of jsonData) {
-            const clientData = transform_row_to_client_json(row);
-            const hasEntityType = 'entityType' in clientData && !is_empty(clientData['entityType']);
-            const hasNameInfo = ['name', 'forename', 'surname', 'companyName'].some(key => key in clientData && !is_empty(clientData[key]));
-
-            if (hasEntityType || hasNameInfo) {
-                transformedData.push(clientData);
-            }
-        }
-        return transformedData;
+    // assessmentRequired boolean parsing
+    const assessmentRequiredRawValue = row['assessmentRequired'];
+    let assessmentRequiredBoolean = false;
+    if (!isEmpty(assessmentRequiredRawValue)) {
+      const rawStr = String(assessmentRequiredRawValue).toLowerCase();
+      assessmentRequiredBoolean = ['true', '1', '1.0', 't', 'yes', 'y'].includes(rawStr);
     }
 
-    function transform_row_to_client_json(row) {
-        const clientData = {};
-        clientData['objectType'] = 'client';
+    // lastReviewed (only if assessmentRequired true) -> unix ms
+    if (assessmentRequiredBoolean) {
+      addFieldIfNotEmpty('lastReviewed', _to_unix_timestamp_ms(row['lastReviewed']));
+    }
 
-        function add_field_if_not_empty(key, value) {
-            if (!is_empty(value)) {
-                clientData[key] = value;
-            }
-        }
+    addFieldIfNotEmpty('periodicReviewStartDate', _to_unix_timestamp_ms(row['periodicReviewStartDate']));
 
-        add_field_if_not_empty('clientId', row['clientId']);
-        add_field_if_not_empty('entityType', row['entityType']);
-        add_field_if_not_empty('status', row['status']);
+    const periodic_review_period_value = row['periodicReviewPeriod'];
+    addFieldIfNotEmpty('periodicReviewPeriod', isEmpty(periodic_review_period_value) ? periodic_review_period_value : String(periodic_review_period_value));
 
-        const entityType = row['entityType'];
-        let entityTypeUpper;
-        if (!is_empty(entityType)) {
-            entityTypeUpper = String(entityType).toUpperCase();
-        } else {
-            entityTypeUpper = null;
-        }
+    // Addresses
+    const currentAddress = {};
+    if (!isEmpty(row['Address line1'])) currentAddress.line1 = String(row['Address line1']);
+    if (!isEmpty(row['Address line2'])) currentAddress.line2 = String(row['Address line2']);
+    if (!isEmpty(row['Address line3'])) currentAddress.line3 = String(row['Address line3']);
+    if (!isEmpty(row['Address line4'])) currentAddress.line4 = String(row['Address line4']);
+    if (!isEmpty(row['poBox'])) currentAddress.poBox = String(row['poBox']);
+    if (!isEmpty(row['city'])) currentAddress.city = String(row['city']);
+    if (!isEmpty(row['state'])) currentAddress.state = String(row['state']);
+    if (!isEmpty(row['province'])) currentAddress.province = String(row['province']);
+    if (!isEmpty(row['postcode'])) currentAddress.postcode = String(row['postcode']);
+    if (!isEmpty(row['country'])) currentAddress.country = String(row['country']);
+    if (!isEmpty(row['countryCode'])) currentAddress.countryCode = String(row['countryCode']).toUpperCase().substring(0,2);
 
-        if (entityTypeUpper === 'ORGANISATION') {
-            add_field_if_not_empty('companyName', row['name']);
-        } else if (entityTypeUpper === 'PERSON') {
-            add_field_if_not_empty('name', row['name']);
-            add_field_if_not_empty('forename', row['forename']);
-            add_field_if_not_empty('middlename', row['middlename']);
-            add_field_if_not_empty('surname', row['surname']);
-        } else {
-            add_field_if_not_empty('name', row['name']);
-            add_field_if_not_empty('forename', row['forename']);
-            add_field_if_not_empty('middlename', row['middlename']);
-            add_field_if_not_empty('surname', row['surname']);
-        }
+    if (Object.keys(currentAddress).length > 0) addFieldIfNotEmpty('addresses', [currentAddress]);
 
-        add_field_if_not_empty('titles', row['titles']);
-        add_field_if_not_empty('suffixes', row['suffixes']);
+    addFieldIfNotEmpty('segment', isEmpty(row['segment']) ? row['segment'] : String(row['segment']));
 
+    // identityNumbers
+    const identityNumbersList = [];
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      if (!isEmpty(row['Duns Number'])) identityNumbersList.push({type:'duns', value: _to_string_id(row['Duns Number'])});
+      if (!isEmpty(row['National Tax No.'])) identityNumbersList.push({type:'tax_no', value: _to_string_id(row['National Tax No.'])});
+      if (!isEmpty(row['Legal Entity Identifier (LEI)'])) identityNumbersList.push({type:'lei', value: _to_string_id(row['Legal Entity Identifier (LEI)'])});
+    } else if (entityTypeUpper === 'PERSON') {
+      if (!isEmpty(row['National ID'])) identityNumbersList.push({type:'national_id', value: _to_string_id(row['National ID'])});
+      if (!isEmpty(row['Driving Licence No.'])) identityNumbersList.push({type:'driving_licence', value: _to_string_id(row['Driving Licence No.'])});
+      if (!isEmpty(row['Social Security No.'])) identityNumbersList.push({type:'ssn', value: _to_string_id(row['Social Security No.'])});
+      if (!isEmpty(row['Passport No.'])) identityNumbersList.push({type:'passport_no', value: _to_string_id(row['Passport No.'])});
+    }
+    if (identityNumbersList.length > 0) clientData.identityNumbers = identityNumbersList;
+
+    // aliases (aliases1..4)
+    const aliasColumns = ['aliases1','aliases2','aliases3','aliases4'];
+    const aliasNameTypes = {
+      'aliases1':'AKA1','aliases2':'AKA2','aliases3':'AKA3','aliases4':'AKA4'
+    };
+    const aliasesList = [];
+    for (const col of aliasColumns) {
+      const val = row[col];
+      if (!isEmpty(val)) {
+        const nameType = aliasNameTypes[col] || col.toUpperCase();
         if (entityTypeUpper === 'PERSON') {
-            let genderValue = row['gender'];
-            if (typeof genderValue === 'string' && !is_empty(genderValue)) {
-                genderValue = genderValue.toUpperCase();
-            }
-            add_field_if_not_empty('gender', genderValue);
-
-            const dateOfBirthValue = row['dateOfBirth'];
-            add_field_if_not_empty('dateOfBirth', !is_empty(dateOfBirthValue) ? String(dateOfBirthValue) : dateOfBirthValue);
-
-            add_field_if_not_empty('birthPlaceCountryCode', row['birthPlaceCountryCode']);
-
-            const deceasedOnValue = row['deceasedOn'];
-            add_field_if_not_empty('deceasedOn', !is_empty(deceasedOnValue) ? String(deceasedOnValue) : deceasedOnValue);
-
-            add_field_if_not_empty('occupation', row['occupation']);
-            add_field_if_not_empty('domicileCodes', _to_string_list(row['domicileCodes']));
-            add_field_if_not_empty('nationalityCodes', _to_string_list(row['nationalityCodes']));
+          aliasesList.push({name:String(val), nameType});
+        } else {
+          aliasesList.push({companyName:String(val), nameType});
         }
-
-        if (entityTypeUpper === 'ORGANISATION') {
-            add_field_if_not_empty('incorporationCountryCode', row['incorporationCountryCode']);
-
-            const dateOfIncorporationValue = row['dateOfIncorporation'];
-            add_field_if_not_empty('dateOfIncorporation', !is_empty(dateOfIncorporationValue) ? String(dateOfIncorporationValue) : dateOfIncorporationValue);
-        }
-
-        const assessmentRequiredRawValue = row['assessmentRequired'];
-        let assessmentRequiredBoolean = false;
-        if (!is_empty(assessmentRequiredRawValue)) {
-            assessmentRequiredBoolean = String(assessmentRequiredRawValue).toLowerCase() === 'true' || String(assessmentRequiredRawValue) === '1' || String(assessmentRequiredRawValue) === '1.0';
-        }
-
-        if (assessmentRequiredBoolean) {
-            add_field_if_not_empty('lastReviewed', _to_unix_timestamp_ms(row['lastReviewed']));
-        }
-
-        add_field_if_not_empty('periodicReviewStartDate', _to_unix_timestamp_ms(row['periodicReviewStartDate']));
-
-        const periodicReviewPeriodValue = row['periodicReviewPeriod'];
-        add_field_if_not_empty('periodicReviewPeriod', !is_empty(periodicReviewPeriodValue) ? String(periodicReviewPeriodValue) : periodicReviewPeriodValue);
-
-        const addressesList = [];
-        const currentAddress = {};
-
-        const addressLine1 = row['Address line1'];
-        if (!is_empty(addressLine1)) {
-            currentAddress['line1'] = String(addressLine1);
-        }
-        const addressLine2 = row['Address line2'];
-        if (!is_empty(addressLine2)) {
-            currentAddress['line2'] = String(addressLine2);
-        }
-        const addressLine3 = row['Address line3'];
-        if (!is_empty(addressLine3)) {
-            currentAddress['line3'] = String(addressLine3);
-        }
-        const addressLine4 = row['Address line4'];
-        if (!is_empty(addressLine4)) {
-            currentAddress['line4'] = String(addressLine4);
-        }
-        const poBox = row['poBox'];
-        if (!is_empty(poBox)) {
-            currentAddress['poBox'] = String(poBox);
-        }
-        const city = row['city'];
-        if (!is_empty(city)) {
-            currentAddress['city'] = String(city);
-        }
-        const state = row['state'];
-        if (!is_empty(state)) {
-            currentAddress['state'] = String(state);
-        }
-        const province = row['province'];
-        if (!is_empty(province)) {
-            currentAddress['province'] = String(province);
-        }
-        const postcode = row['postcode'];
-        if (!is_empty(postcode)) {
-            currentAddress['postcode'] = String(postcode);
-        }
-        const country = row['country'];
-        if (!is_empty(country)) {
-            currentAddress['country'] = String(country);
-        }
-        const countryCode = row['countryCode'];
-        if (!is_empty(countryCode)) {
-            currentAddress['countryCode'] = String(countryCode).toUpperCase().substring(0, 2);
-        }
-
-        if (Object.keys(currentAddress).length > 0) {
-            addressesList.push(currentAddress);
-        }
-
-        add_field_if_not_empty('addresses', addressesList);
-
-        add_field_if_not_empty('segment', !is_empty(row['segment']) ? String(row['segment']) : row['segment']);
-
-        const identityNumbersList = [];
-
-        if (entityTypeUpper === 'ORGANISATION') {
-            const dunsNumber = row['Duns Number'];
-            if (!is_empty(dunsNumber)) {
-                identityNumbersList.push({ "type": "duns", "value": _to_string_id(dunsNumber) });
-            }
-            const nationalTaxNo = row['National Tax No.'];
-            if (!is_empty(nationalTaxNo)) {
-                identityNumbersList.push({ "type": "tax_no", "value": _to_string_id(nationalTaxNo) });
-            }
-            const legalEntityIdentifier = row['Legal Entity Identifier (LEI)'];
-            if (!is_empty(legalEntityIdentifier)) {
-                identityNumbersList.push({ "type": "lei", "value": _to_string_id(legalEntityIdentifier) });
-            }
-        } else if (entityTypeUpper === 'PERSON') {
-            const nationalId = row['National ID'];
-            if (!is_empty(nationalId)) {
-                identityNumbersList.push({ "type": "national_id", "value": _to_string_id(nationalId) });
-            }
-            const drivingLicenceNo = row['Driving Licence No.'];
-            if (!is_empty(drivingLicenceNo)) {
-                identityNumbersList.push({ "type": "driving_licence", "value": _to_string_id(drivingLicenceNo) });
-            }
-            const socialSecurityNumber = row['Social Security Number'];
-            if (!is_empty(socialSecurityNumber)) {
-                identityNumbersList.push({ "type": "ssn", "value": _to_string_id(socialSecurityNumber) });
-            }
-            const passportNumber = row['Passport No.'];
-            if (!is_empty(passportNumber)) {
-                identityNumbersList.push({ "type": "passport_no", "value": _to_string_id(passportNumber) });
-            }
-        }
-
-        if (identityNumbersList.length > 0) {
-            clientData['identityNumbers'] = identityNumbersList;
-        }
-
-        const aliasesList = [];
-        const aliasColumns = ['aliases1', 'aliases2', 'aliases3', 'aliases4'];
-        const aliasNameTypes = {
-            'aliases1': 'AKA1',
-            'aliases2': 'AKA2',
-            'aliases3': 'AKA3',
-            'aliases4': 'AKA4',
-        };
-
-        for (const colName of aliasColumns) {
-            const aliasValue = row[colName];
-            if (!is_empty(aliasValue)) {
-                const nameType = aliasNameTypes[colName] || colName.toUpperCase();
-
-                if (entityTypeUpper === 'PERSON') {
-                    aliasesList.push({ "name": String(aliasValue), "nameType": nameType });
-                } else {
-                    aliasesList.push({ "companyName": String(aliasValue), "nameType": nameType });
-                }
-            }
-        }
-
-        if (aliasesList.length > 0) {
-            clientData['aliases'] = aliasesList;
-        }
-
-        const securityEnabled = row['Security Enabled'];
-        if (securityEnabled !== null && securityEnabled !== undefined && (String(securityEnabled).toLowerCase() === 'true' || String(securityEnabled) === 't' || String(securityEnabled) === '1')) {
-            const securityTags = {};
-
-            const tag1 = row['Tag 1'];
-            if (!is_empty(tag1)) {
-                securityTags['orTags1'] = tag1;
-            }
-            const tag2 = row['Tag 2'];
-            if (!is_empty(tag2)) {
-                securityTags['orTags2'] = tag2;
-            }
-            const tag3 = row['Tag 3'];
-            if (!is_empty(tag3)) {
-                securityTags['orTags3'] = tag3;
-            }
-
-            clientData['security'] = securityTags;
-        }
-
-        if (!is_empty(assessmentRequiredRawValue)) {
-            add_field_if_not_empty('assessmentRequired', assessmentRequiredBoolean);
-        }
-
-        return clientData;
+      }
     }
-});
+    if (aliasesList.length > 0) clientData.aliases = aliasesList;
+
+    // security object
+    const securityEnabled = row['Security Enabled'];
+    if (!isEmpty(securityEnabled) && ['true','t','1','yes','y'].includes(String(securityEnabled).toLowerCase())) {
+      const securityTags = {};
+      if (!isEmpty(row['Tag 1'])) securityTags.orTags1 = row['Tag 1'];
+      if (!isEmpty(row['Tag 2'])) securityTags.orTags2 = row['Tag 2'];
+      if (!isEmpty(row['Tag 3'])) securityTags.orTags3 = row['Tag 3'];
+      clientData.security = securityTags;
+    }
+
+    if (!isEmpty(assessmentRequiredRawValue)) {
+      addFieldIfNotEmpty('assessmentRequired', assessmentRequiredBoolean);
+    }
+
+    return clientData;
+  }
+
+  // Main UI handling
+  function init() {
+    const fileInput = document.getElementById('fileInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const outputEl = document.getElementById('output');
+    const downloadLink = document.getElementById('downloadLink');
+
+    if (!fileInput || !convertBtn || !outputEl || !downloadLink) {
+      console.warn('Expected elements: #fileInput, #convertBtn, #output, #downloadLink');
+    }
+
+    convertBtn.addEventListener('click', () => {
+      if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please choose an XLS/XLSX file first.');
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        const data = e.target.result;
+        // prefer array buffer read and type 'array'
+        const workbook = XLSX.read(data, {type: 'array', cellDates: true});
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+
+        // Convert sheet rows to JS objects (header row as keys)
+        const rows = XLSX.utils.sheet_to_json(sheet, {defval: null, raw: false});
+
+        // Apply transformation
+        const transformedRaw = rows.map(transformRowToClientJson);
+
+        // Filter out sparse records (similar to your Python logic)
+        const transformed = transformedRaw.filter(record => {
+          const hasEntityType = record.entityType && !isEmpty(record.entityType);
+          const hasNameInfo = ['name','forename','surname','companyName'].some(k => record[k] && !isEmpty(record[k]));
+          return hasEntityType || hasNameInfo;
+        });
+
+        if (transformed.length === 0) {
+          outputEl.textContent = 'No valid rows found for conversion.';
+          downloadLink.style.display = 'none';
+          return;
+        }
+
+        // Build JSONL content
+        const jsonlLines = transformed.map(rec => JSON.stringify(rec));
+        const jsonlContent = jsonlLines.join('\n');
+
+        // Show preview (first 4000 chars)
+        outputEl.textContent = jsonlContent.slice(0, 4000) + (jsonlContent.length > 4000 ? '\n\n...preview truncated...' : '');
+
+        // Prepare download
+        const blob = new Blob([jsonlContent], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        downloadLink.href = url;
+        const filename = file.name.replace(/\.[^/.]+$/, '') + '.jsonl';
+        downloadLink.download = filename;
+        downloadLink.style.display = 'inline-block';
+        downloadLink.textContent = 'Download JSONL file';
+      };
+
+      // Read as array buffer for SheetJS
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // run when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
