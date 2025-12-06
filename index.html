@@ -18,14 +18,13 @@
   <div class="container">
 
     <!-- HEADER: Title Left, Logo Right -->
-   <!-- HEADER: Title Left, Logo Right -->
-<div class="header-flex">
-  <h1>ASAM Client Import Converter</h1>
-  <img src="logo.png" alt="Company Logo" class="app-logo">
-</div>
-<p class="sub-description">
-  Convert the XLS template into JSONL for ASAM client import.
-</p>
+    <div class="header-flex">
+      <h1>ASAM Client Import Converter</h1>
+      <img src="logo.png" alt="Company Logo" class="app-logo">
+    </div>
+    <p class="sub-description">
+      Convert the XLS template into JSONL for ASAM client import.
+    </p>
 
     <!-- STEP 1 -->
     <section class="step-box">
@@ -47,8 +46,9 @@
 
       <label for="fileInput" class="file-upload-label">Choose File</label>
       <input type="file" id="fileInput" accept=".xls,.xlsx">
+      <p id="fileStatus" class="file-status"></p>
 
-      <button id="convertBtn" type="button" class="convert-btn">Convert to JSONL</button>
+      <button id="convertBtn" type="button" class="convert-btn" disabled>Convert to JSONL</button>
 
       <a id="downloadLink" class="download-jsonl" style="display:none;">Download JSONL</a>
 
