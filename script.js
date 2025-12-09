@@ -1,19 +1,17 @@
-// script.js
-// Browser-side XLS/XLSX -> JSONL converter fully aligned with Python logic.
-
 (function () {
   // --- UTILITY FUNCTIONS ---
   function isEmpty(value) {
     if (value === null || value === undefined) return true;
-    if (typeof value === 'number' && isNaN(value)) return true;
+    if (typeof value === 'number' && Number.isNaN(value)) return true;
     if (typeof value === 'string') return value.trim() === '';
-    if (Array.isArray(value) || typeof value === 'object') return Object.keys(value).length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value).length === 0;
     return false;
   }
 
   function _to_string_id(value) {
-    if (typeof value === 'number' && Number.isInteger(value)) return String(value);
-    if (typeof value === 'number') return String(Math.floor(value));
+    if (typeof value === 'number' && !Number.isNaN(value) && Number.isInteger(value)) return String(value);
+    if (typeof value === 'number' && !Number.isNaN(value)) return String(Math.floor(value));
     return String(value);
   }
 
@@ -53,7 +51,6 @@
       if (!isEmpty(value)) clientData[key] = value;
     }
 
-    // --- Primary fields ---
     addFieldIfNotEmpty('clientId', row['clientid']);
     addFieldIfNotEmpty('entityType', row['entitytype']);
     addFieldIfNotEmpty('status', row['status']);
@@ -105,16 +102,16 @@
     addFieldIfNotEmpty('periodicReviewStartDate', _to_unix_timestamp_ms(row['periodicreviewstartdate']));
     addFieldIfNotEmpty('periodicReviewPeriod', row['periodicreviewperiod'] ? String(row['periodicreviewperiod']) : row['periodicreviewperiod']);
 
-    // --- Address fields ---
+    // --- Addresses ---
     const addrKeys = ['addressline1','addressline2','addressline3','addressline4','pobox','city','state','province','postcode','country','countrycode'];
     const addrMap = {addressline1:'line1', addressline2:'line2', addressline3:'line3', addressline4:'line4', pobox:'poBox', city:'city', state:'state', province:'province', postcode:'postcode', country:'country', countrycode:'countryCode'};
     const currentAddress = {};
     addrKeys.forEach(k => {
       if (!isEmpty(row[k])) {
-        currentAddress[addrMap[k]] = k === 'countrycode' ? String(row[k]).toUpperCase().substring(0,2) : String(row[k]);
+        currentAddress[addrMap[k]] = k==='countrycode'?String(row[k]).toUpperCase().substring(0,2):String(row[k]);
       }
     });
-    if (Object.keys(currentAddress).length > 0) addFieldIfNotEmpty('addresses', [currentAddress]);
+    if (Object.keys(currentAddress).length>0) addFieldIfNotEmpty('addresses',[currentAddress]);
 
     // --- Segment ---
     addFieldIfNotEmpty('segment', row['segment'] ? String(row['segment']) : row['segment']);
@@ -131,74 +128,74 @@
       if (!isEmpty(row['socialsecuritynumber'])) identityNumbers.push({type:'ssn', value:_to_string_id(row['socialsecuritynumber'])});
       if (!isEmpty(row['passportno'])) identityNumbers.push({type:'passport_no', value:_to_string_id(row['passportno'])});
     }
-    if (identityNumbers.length > 0) clientData['identityNumbers'] = identityNumbers;
+    if (identityNumbers.length>0) clientData['identityNumbers'] = identityNumbers;
 
     // --- Aliases ---
     const aliasesList = [];
     const aliasCols = ['aliases1','aliases2','aliases3','aliases4'];
     const aliasMap = {aliases1:'AKA1', aliases2:'AKA2', aliases3:'AKA3', aliases4:'AKA4'};
-    aliasCols.forEach(col => {
-      if (!isEmpty(row[col])) {
-        if (entityTypeUpper === 'PERSON') aliasesList.push({name:String(row[col]), nameType:aliasMap[col]});
+    aliasCols.forEach(col=>{
+      if(!isEmpty(row[col])) {
+        if(entityTypeUpper==='PERSON') aliasesList.push({name:String(row[col]), nameType:aliasMap[col]});
         else aliasesList.push({companyName:String(row[col]), nameType:aliasMap[col]});
       }
     });
-    if (aliasesList.length>0) clientData['aliases'] = aliasesList;
+    if(aliasesList.length>0) clientData['aliases']=aliasesList;
 
     // --- Security ---
-    const securityEnabled = row['securityenabled'];
-    if (!isEmpty(securityEnabled) && ['true','t','1','yes','y'].includes(String(securityEnabled).toLowerCase())) {
-      const securityTags = {};
-      if (!isEmpty(row['tag1'])) securityTags.orTags1 = row['tag1'];
-      if (!isEmpty(row['tag2'])) securityTags.orTags2 = row['tag2'];
-      if (!isEmpty(row['tag3'])) securityTags.orTags3 = row['tag3'];
-      clientData['security'] = securityTags;
+    const securityEnabled=row['securityenabled'];
+    if(!isEmpty(securityEnabled) && ['true','t','1','yes','y'].includes(String(securityEnabled).toLowerCase())){
+      const securityTags={};
+      if(!isEmpty(row['tag1'])) securityTags.orTags1=row['tag1'];
+      if(!isEmpty(row['tag2'])) securityTags.orTags2=row['tag2'];
+      if(!isEmpty(row['tag3'])) securityTags.orTags3=row['tag3'];
+      clientData['security']=securityTags;
     }
 
     // --- assessmentRequired last ---
-    if (!isEmpty(assessmentRequiredRaw)) addFieldIfNotEmpty('assessmentRequired', assessmentRequiredBoolean);
+    if(!isEmpty(assessmentRequiredRaw)) addFieldIfNotEmpty('assessmentRequired', assessmentRequiredBoolean);
 
     return clientData;
   }
 
   // --- INIT UI ---
-  function init() {
-    const fileInput = document.getElementById('fileInput');
-    const convertBtn = document.getElementById('convertBtn');
-    const outputEl = document.getElementById('output');
-    const downloadLink = document.getElementById('downloadLink');
+  function init(){
+    const fileInput=document.getElementById('fileInput');
+    const convertBtn=document.getElementById('convertBtn');
+    const outputEl=document.getElementById('output');
+    const downloadLink=document.getElementById('downloadLink');
 
-    convertBtn.addEventListener('click', () => {
-      if (!fileInput.files || fileInput.files.length === 0) return alert('Please choose an XLS/XLSX file first.');
-      const reader = new FileReader();
-      reader.onload = function (e) {
-        const data = e.target.result;
-        const workbook = XLSX.read(data, {type:'array', cellDates:true});
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(firstSheet, {defval:null, raw:false});
-        const transformed = rows.map(transformRowToClientJson).filter(rec => {
-          const hasEntityType = rec.entityType && !isEmpty(rec.entityType);
-          const hasNameInfo = ['name','forename','surname','companyName'].some(k => rec[k] && !isEmpty(rec[k]));
+    convertBtn.addEventListener('click',()=>{
+      if(!fileInput.files || fileInput.files.length===0) return alert('Please choose an XLS/XLSX file first.');
+      const reader=new FileReader();
+      reader.onload=function(e){
+        const data=e.target.result;
+        const workbook=XLSX.read(data,{type:'array',cellDates:true});
+        const firstSheet=workbook.Sheets[workbook.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(firstSheet,{defval:null,raw:false});
+        const transformed=rows.map(transformRowToClientJson).filter(rec=>{
+          const hasEntityType=rec.entityType && !isEmpty(rec.entityType);
+          const hasNameInfo=['name','forename','surname','companyName'].some(k=>rec[k] && !isEmpty(rec[k]));
           return hasEntityType || hasNameInfo;
         });
-        if (!transformed.length) {
-          outputEl.textContent = 'No valid rows found for conversion.';
-          downloadLink.style.display = 'none';
+        if(!transformed.length){
+          outputEl.textContent='No valid rows found for conversion.';
+          downloadLink.style.display='none';
           return;
         }
-        const jsonlContent = transformed.map(r => JSON.stringify(r)).join('\n');
-        outputEl.textContent = jsonlContent.slice(0,4000) + (jsonlContent.length>4000?'\n\n...preview truncated...':'');
-        const blob = new Blob([jsonlContent], {type:'application/json'});
-        const url = URL.createObjectURL(blob);
-        downloadLink.href = url;
-        downloadLink.download = fileInput.files[0].name.replace(/\.[^/.]+$/, '') + '.jsonl';
-        downloadLink.style.display = 'inline-block';
-        downloadLink.textContent = 'Download JSONL file';
+        const jsonlContent=transformed.map(r=>JSON.stringify(r)).join('\n');
+        outputEl.textContent=jsonlContent.slice(0,4000)+(jsonlContent.length>4000?'\n\n...preview truncated...':'');
+        const blob=new Blob([jsonlContent],{type:'application/json'});
+        const url=URL.createObjectURL(blob);
+        downloadLink.href=url;
+        downloadLink.download=fileInput.files[0].name.replace(/\.[^/.]+$/,'')+'.jsonl';
+        downloadLink.style.display='inline-block';
+        downloadLink.textContent='Download JSONL file';
       };
       reader.readAsArrayBuffer(fileInput.files[0]);
     });
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
