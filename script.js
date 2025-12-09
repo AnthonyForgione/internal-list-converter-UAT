@@ -1,196 +1,268 @@
-// -----------------------------
-// Helpers
-// -----------------------------
+// script.js 
+// Browser-side XLS/XLSX -> JSONL converter adapted from the user's Python logic.
+// Requires SheetJS (xlsx.full.min.js) loaded in index.html.
 
-// Convert a raw value into a list of trimmed strings
-function _to_string_list(raw) {
-  if (!raw) return [];
-
-  if (typeof raw === "string") {
-    return raw
-      .split(",")
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+(function () {
+  // Utility helpers
+  function isEmpty(value) {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'number' && isNaN(value)) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') {
+      // if it's a Date and invalid
+      if (value instanceof Date) return isNaN(value.getTime());
+      // treat empty object as empty
+      return Object.keys(value).length === 0;
+    }
+    return false;
   }
 
-  // Already an array? Normalize it.
-  if (Array.isArray(raw)) {
-    return raw.map(v => String(v).trim()).filter(Boolean);
+  function _to_string_id(value) {
+    if (typeof value === 'number' && Number.isInteger(value)) return String(value);
+    if (value instanceof Date) return String(value.valueOf());
+    return String(value);
   }
 
-  // Anything else → wrap as string
-  return [String(raw)];
-}
+  function _to_string_list(value) {
+    if (isEmpty(value)) return null;
+    if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+    if (typeof value === 'string') {
+      return value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    return [String(value)];
+  }
 
-// Convert a date string to epoch ms (ASAM format)
-function _to_epoch(dateStr) {
-  if (!dateStr) return null;
-  const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? null : d.getTime();
-}
+  function _to_unix_timestamp_ms(value) {
+    if (isEmpty(value)) return null;
+    if (value instanceof Date) {
+      if (isNaN(value.getTime())) return null;
+      return value.getTime();
+    }
+    if (typeof value === 'number') {
+      if (value > 1e12) return Math.floor(value);
+      if (value > 1e9) return Math.floor(value * 1000);
+    }
+    const parsed = Date.parse(String(value));
+    if (!isNaN(parsed)) return parsed;
+    return null;
+  }
 
+  function normalizeKey(k) {
+    if (k === undefined || k === null) return '';
+    return String(k).replace(/^"+|"+$/g, '').trim();
+  }
 
-// -----------------------------
-// Process XLS file
-// -----------------------------
+  function normalizeRowKeys(row) {
+    const out = {};
+    for (const [k, v] of Object.entries(row)) {
+      out[normalizeKey(k)] = v;
+    }
+    return out;
+  }
 
-function handleFileImport(file, callback) {
-  const reader = new FileReader();
+  function transformRowToClientJson(rowRaw) {
+    const row = normalizeRowKeys(rowRaw);
+    const clientData = {};
+    clientData.objectType = 'client';
 
-  reader.onload = function (e) {
-    const data = new Uint8Array(e.target.result);
-    const workbook = XLSX.read(data, { type: "array" });
-
-    const firstSheet = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheet];
-
-    // Convert sheet → array of objects
-    const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-
-    callback(rows);
-  };
-
-  reader.readAsArrayBuffer(file);
-}
-
-
-// -----------------------------
-// Convert rows → JSONL
-// -----------------------------
-
-function convertToJSONL(rows) {
-  const jsonlLines = [];
-
-  rows.forEach(row => {
-    const client = {};
-
-    // Basic fields
-    client.objectType = "client";
-    client.clientId = row["clientId"] || "";
-    client.entityType = row["entityType"] || "";
-    client.status = row["status"] || "";
-    client.segment = row["segment"] || "";
-    client.assessmentRequired = row["assessmentRequired"] === "true" || row["assessmentRequired"] === true;
-
-    // Personal details
-    client.name = row["name"] || "";
-    client.forename = row["forename"] || "";
-    client.middlename = row["middlename"] || "";
-    client.surname = row["surname"] || "";
-
-    // Titles / suffixes MUST BE arrays
-    const titles = _to_string_list(row["titles"]);
-    if (titles.length > 0) client.titles = titles;
-
-    const suffixes = _to_string_list(row["suffixes"]);
-    if (suffixes.length > 0) client.suffixes = suffixes;
-
-    // Gender
-    if (row["gender"]) client.gender = row["gender"];
-
-    // Dates
-    const dob = _to_epoch(row["dateOfBirth"]);
-    if (dob) client.dateOfBirth = row["dateOfBirth"];
-
-    const deceased = _to_epoch(row["deceasedOn"]);
-    if (deceased) client.deceasedOn = row["deceasedOn"];
-
-    // Birth country
-    if (row["birthPlaceCountryCode"])
-      client.birthPlaceCountryCode = row["birthPlaceCountryCode"];
-
-    // Occupation
-    if (row["occupation"])
-      client.occupation = row["occupation"];
-
-    // Arrays
-    const domicileList = _to_string_list(row["domicileCodes"]);
-    if (domicileList.length > 0) client.domicileCodes = domicileList;
-
-    const nationalityList = _to_string_list(row["nationalityCodes"]);
-    if (nationalityList.length > 0) client.nationalityCodes = nationalityList;
-
-    // Review dates
-    const lastReviewed = _to_epoch(row["lastReviewed"]);
-    if (lastReviewed) client.lastReviewed = lastReviewed;
-
-    const reviewStart = _to_epoch(row["periodicReviewStartDate"]);
-    if (reviewStart) client.periodicReviewStartDate = reviewStart;
-
-    if (row["periodicReviewPeriod"])
-      client.periodicReviewPeriod = row["periodicReviewPeriod"];
-
-    // Address (only 1 for this simplified template)
-    const address = {
-      line1: row["address.line1"] || "",
-      poBox: row["address.poBox"] || "",
-      city: row["address.city"] || "",
-      province: row["address.province"] || "",
-      country: row["address.country"] || "",
-      countryCode: row["address.countryCode"] || ""
-    };
-
-    // Only attach address if at least one value is filled
-    if (Object.values(address).some(v => v.trim() !== "")) {
-      client.addresses = [address];
+    function addFieldIfNotEmpty(key, value) {
+      if (!isEmpty(value)) clientData[key] = value;
     }
 
-    // Aliases
-    const alias1 = row["alias1"];
-    const alias2 = row["alias2"];
-    const alias3 = row["alias3"];
+    let entityTypeUpper = null;
+    if (!isEmpty(row['entityType'])) {
+      entityTypeUpper = String(row['entityType']).toUpperCase();
+    }
 
-    const aliases = [];
-    if (alias1) aliases.push({ name: alias1, nameType: "AKA1" });
-    if (alias2) aliases.push({ name: alias2, nameType: "AKA2" });
-    if (alias3) aliases.push({ name: alias3, nameType: "AKA3" });
+    // Primary fields
+    addFieldIfNotEmpty('clientId', row['clientId']);
+    addFieldIfNotEmpty('entityType', row['entityType']);
+    addFieldIfNotEmpty('status', row['status']);
 
-    if (aliases.length > 0) client.aliases = aliases;
+    // Name fields
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      addFieldIfNotEmpty('companyName', row['name']);
+    } else {
+      addFieldIfNotEmpty('name', row['name']);
+      addFieldIfNotEmpty('forename', row['forename']);
+      addFieldIfNotEmpty('middlename', row['middlename']);
+      addFieldIfNotEmpty('surname', row['surname']);
+    }
 
-    // Convert object → JSON line
-    jsonlLines.push(JSON.stringify(client));
-  });
+    // Common fields: titles and suffixes now as arrays
+    if (!isEmpty(row['titles'])) clientData.titles = _to_string_list(row['titles']);
+    if (!isEmpty(row['suffixes'])) clientData.suffixes = _to_string_list(row['suffixes']);
 
-  return jsonlLines.join("\n");
-}
+    // Person-specific
+    if (entityTypeUpper === 'PERSON') {
+      let genderValue = row['gender'];
+      if (typeof genderValue === 'string' && !isEmpty(genderValue)) genderValue = genderValue.toUpperCase();
+      addFieldIfNotEmpty('gender', genderValue);
 
+      const dob = row['dateOfBirth'];
+      addFieldIfNotEmpty('dateOfBirth', isEmpty(dob) ? dob : String(dob));
+      addFieldIfNotEmpty('birthPlaceCountryCode', row['birthPlaceCountryCode']);
 
-// -----------------------------
-// UI Logic (Upload + Convert Button)
-// -----------------------------
+      const deceasedOn = row['deceasedOn'];
+      addFieldIfNotEmpty('deceasedOn', isEmpty(deceasedOn) ? deceasedOn : String(deceasedOn));
 
-let importedRows = [];
+      addFieldIfNotEmpty('occupation', row['occupation']);
+      addFieldIfNotEmpty('domicileCodes', _to_string_list(row['domicileCodes']));
+      addFieldIfNotEmpty('nationalityCodes', _to_string_list(row['nationalityCodes']));
+    }
 
-// Handle file upload
-document.getElementById("fileInput").addEventListener("change", function (event) {
-  const file = event.target.files[0];
-  if (!file) return;
+    // Organisation-specific
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      addFieldIfNotEmpty('incorporationCountryCode', row['incorporationCountryCode']);
+      const doi = row['dateOfIncorporation'];
+      addFieldIfNotEmpty('dateOfIncorporation', isEmpty(doi) ? doi : String(doi));
+    }
 
-  handleFileImport(file, rows => {
-    importedRows = rows;
-    document.getElementById("output").textContent = "File loaded. Click Convert to generate JSONL.";
-  });
-});
+    // assessmentRequired boolean parsing
+    const assessmentRequiredRawValue = row['assessmentRequired'];
+    let assessmentRequiredBoolean = false;
+    if (!isEmpty(assessmentRequiredRawValue)) {
+      const rawStr = String(assessmentRequiredRawValue).toLowerCase();
+      assessmentRequiredBoolean = ['true', '1', '1.0', 't', 'yes', 'y'].includes(rawStr);
+    }
 
+    if (assessmentRequiredBoolean) {
+      addFieldIfNotEmpty('lastReviewed', _to_unix_timestamp_ms(row['lastReviewed']));
+    }
 
-// Handle Convert button
-document.getElementById("convertBtn").addEventListener("click", function () {
-  if (importedRows.length === 0) {
-    alert("Please upload an XLS file first.");
-    return;
+    addFieldIfNotEmpty('periodicReviewStartDate', _to_unix_timestamp_ms(row['periodicReviewStartDate']));
+    const periodic_review_period_value = row['periodicReviewPeriod'];
+    addFieldIfNotEmpty('periodicReviewPeriod', isEmpty(periodic_review_period_value) ? periodic_review_period_value : String(periodic_review_period_value));
+
+    // Addresses
+    const currentAddress = {};
+    if (!isEmpty(row['Address line1'])) currentAddress.line1 = String(row['Address line1']);
+    if (!isEmpty(row['Address line2'])) currentAddress.line2 = String(row['Address line2']);
+    if (!isEmpty(row['Address line3'])) currentAddress.line3 = String(row['Address line3']);
+    if (!isEmpty(row['Address line4'])) currentAddress.line4 = String(row['Address line4']);
+    if (!isEmpty(row['poBox'])) currentAddress.poBox = String(row['poBox']);
+    if (!isEmpty(row['city'])) currentAddress.city = String(row['city']);
+    if (!isEmpty(row['state'])) currentAddress.state = String(row['state']);
+    if (!isEmpty(row['province'])) currentAddress.province = String(row['province']);
+    if (!isEmpty(row['postcode'])) currentAddress.postcode = String(row['postcode']);
+    if (!isEmpty(row['country'])) currentAddress.country = String(row['country']);
+    if (!isEmpty(row['countryCode'])) currentAddress.countryCode = String(row['countryCode']).toUpperCase().substring(0,2);
+    if (Object.keys(currentAddress).length > 0) addFieldIfNotEmpty('addresses', [currentAddress]);
+
+    addFieldIfNotEmpty('segment', isEmpty(row['segment']) ? row['segment'] : String(row['segment']));
+
+    // identityNumbers
+    const identityNumbersList = [];
+    if (entityTypeUpper === 'ORGANISATION' || entityTypeUpper === 'ORGANIZATION') {
+      if (!isEmpty(row['Duns Number'])) identityNumbersList.push({type:'duns', value: _to_string_id(row['Duns Number'])});
+      if (!isEmpty(row['National Tax No.'])) identityNumbersList.push({type:'tax_no', value: _to_string_id(row['National Tax No.'])});
+      if (!isEmpty(row['Legal Entity Identifier (LEI)'])) identityNumbersList.push({type:'lei', value: _to_string_id(row['Legal Entity Identifier (LEI)'])});
+    } else if (entityTypeUpper === 'PERSON') {
+      if (!isEmpty(row['National ID'])) identityNumbersList.push({type:'national_id', value: _to_string_id(row['National ID'])});
+      if (!isEmpty(row['Driving Licence No.'])) identityNumbersList.push({type:'driving_licence', value: _to_string_id(row['Driving Licence No.'])});
+      if (!isEmpty(row['Social Security No.'])) identityNumbersList.push({type:'ssn', value: _to_string_id(row['Social Security No.'])});
+      if (!isEmpty(row['Passport No.'])) identityNumbersList.push({type:'passport_no', value: _to_string_id(row['Passport No.'])});
+    }
+    if (identityNumbersList.length > 0) clientData.identityNumbers = identityNumbersList;
+
+    // aliases (aliases1..4)
+    const aliasColumns = ['aliases1','aliases2','aliases3','aliases4'];
+    const aliasNameTypes = {
+      'aliases1':'AKA1','aliases2':'AKA2','aliases3':'AKA3','aliases4':'AKA4'
+    };
+    const aliasesList = [];
+    for (const col of aliasColumns) {
+      const val = row[col];
+      if (!isEmpty(val)) {
+        const nameType = aliasNameTypes[col] || col.toUpperCase();
+        if (entityTypeUpper === 'PERSON') {
+          aliasesList.push({name:String(val), nameType});
+        } else {
+          aliasesList.push({companyName:String(val), nameType});
+        }
+      }
+    }
+    if (aliasesList.length > 0) clientData.aliases = aliasesList;
+
+    // security object
+    const securityEnabled = row['Security Enabled'];
+    if (!isEmpty(securityEnabled) && ['true','t','1','yes','y'].includes(String(securityEnabled).toLowerCase())) {
+      const securityTags = {};
+      if (!isEmpty(row['Tag 1'])) securityTags.orTags1 = row['Tag 1'];
+      if (!isEmpty(row['Tag 2'])) securityTags.orTags2 = row['Tag 2'];
+      if (!isEmpty(row['Tag 3'])) securityTags.orTags3 = row['Tag 3'];
+      clientData.security = securityTags;
+    }
+
+    if (!isEmpty(assessmentRequiredRawValue)) {
+      addFieldIfNotEmpty('assessmentRequired', assessmentRequiredBoolean);
+    }
+
+    return clientData;
   }
 
-  const jsonl = convertToJSONL(importedRows);
+  function init() {
+    const fileInput = document.getElementById('fileInput');
+    const convertBtn = document.getElementById('convertBtn');
+    const outputEl = document.getElementById('output');
+    const downloadLink = document.getElementById('downloadLink');
 
-  // Show in <pre>
-  document.getElementById("output").textContent = jsonl;
+    if (!fileInput || !convertBtn || !outputEl || !downloadLink) {
+      console.warn('Expected elements: #fileInput, #convertBtn, #output, #downloadLink');
+    }
 
-  // Enable download
-  const blob = new Blob([jsonl], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
+    convertBtn.addEventListener('click', () => {
+      if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please choose an XLS/XLSX file first.');
+        return;
+      }
 
-  const link = document.getElementById("downloadLink");
-  link.href = url;
-  link.download = "clients.jsonl";
-  link.style.display = "inline-block";
-});
+      const file = fileInput.files[0];
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        const data = e.target.result;
+        const workbook = XLSX.read(data, {type: 'array', cellDates: true});
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+
+        const rows = XLSX.utils.sheet_to_json(sheet, {defval: null, raw: false});
+        const transformedRaw = rows.map(transformRowToClientJson);
+
+        const transformed = transformedRaw.filter(record => {
+          const hasEntityType = record.entityType && !isEmpty(record.entityType);
+          const hasNameInfo = ['name','forename','surname','companyName'].some(k => record[k] && !isEmpty(record[k]));
+          return hasEntityType || hasNameInfo;
+        });
+
+        if (transformed.length === 0) {
+          outputEl.textContent = 'No valid rows found for conversion.';
+          downloadLink.style.display = 'none';
+          return;
+        }
+
+        const jsonlLines = transformed.map(rec => JSON.stringify(rec));
+        const jsonlContent = jsonlLines.join('\n');
+
+        outputEl.textContent = jsonlContent.slice(0, 4000) + (jsonlContent.length > 4000 ? '\n\n...preview truncated...' : '');
+
+        const blob = new Blob([jsonlContent], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        downloadLink.href = url;
+        const filename = file.name.replace(/\.[^/.]+$/, '') + '.jsonl';
+        downloadLink.download = filename;
+        downloadLink.style.display = 'inline-block';
+        downloadLink.textContent = 'Download JSONL file';
+      };
+
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
