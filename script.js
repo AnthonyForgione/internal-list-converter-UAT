@@ -187,4 +187,29 @@
 
       const jsonl = transformed.map(r => JSON.stringify(r)).join("\n");
 
-      output.text
+      output.textContent =
+        jsonl.slice(0, 4000) +
+        (jsonl.length > 4000 ? "\n\n...preview truncated..." : "");
+
+      const blob = new Blob([jsonl], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+
+      downloadLink.href = url;
+      downloadLink.download = file.name.replace(/\.[^/.]+$/, "") + ".jsonl";
+      downloadLink.textContent = "Download JSONL file";
+      downloadLink.style.display = "inline-block";
+
+    } catch (err) {
+      console.error(err);
+      output.textContent = "❌ Error while processing file: " + err.message;
+      downloadLink.style.display = "none";
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+
+})();
