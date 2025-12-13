@@ -2,28 +2,23 @@
    DOM READY
 ========================= */
 
-(function () {
+document.addEventListener("DOMContentLoaded", () => {
+  const fileInput = document.getElementById("fileInput");
+  const convertBtn = document.getElementById("convertBtn");
+  const output = document.getElementById("output");
+  const downloadLink = document.getElementById("downloadLink");
 
-  function init() {
-    const fileInput = document.getElementById("fileInput");
-    const convertBtn = document.getElementById("convertBtn");
-    const output = document.getElementById("output");
-    const downloadLink = document.getElementById("downloadLink");
-
-    downloadLink.style.display = "none";
-
-    convertBtn.addEventListener("click", () => {
-      if (!fileInput.files || !fileInput.files.length) {
-        output.textContent = "❌ Please select an Excel file first.";
-        downloadLink.style.display = "none";
-        return;
-      }
-      processExcel(fileInput.files[0], output, downloadLink);
-    });
-  }
+  convertBtn.addEventListener("click", () => {
+    if (!fileInput.files || !fileInput.files.length) {
+      output.textContent = "❌ Please select an Excel file first.";
+      downloadLink.style.display = "none";
+      return;
+    }
+    processExcel(fileInput.files[0]);
+  });
 
   /* =========================
-     Utilities (UNCHANGED)
+     Utilities
   ========================= */
 
   function isEmpty(value) {
@@ -33,26 +28,25 @@
       const v = value.trim().toLowerCase();
       return v === "" || v === "nan";
     }
+    if (Array.isArray(value)) return value.length === 0;
     return false;
   }
 
   function parseDateToYMD(value) {
     const d = new Date(value);
-    return isNaN(d) ? null : d.toISOString().slice(0, 10);
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
   }
 
   function cleanAndSplit(value) {
     if (isEmpty(value)) return [];
-
     const parsedDate = parseDateToYMD(value);
     if (parsedDate) return [parsedDate];
-
     if (typeof value === "string") {
       if (value.includes(",")) return value.split(",").map(v => v.trim()).filter(Boolean);
       if (value.includes(";")) return value.split(";").map(v => v.trim()).filter(Boolean);
       return [value.trim()];
     }
-    return [value];
+    return [String(value)];
   }
 
   function addIfNotEmpty(obj, key, val) {
@@ -60,14 +54,14 @@
       val !== null &&
       val !== undefined &&
       val !== "" &&
-      !(Array.isArray(val) && !val.length)
+      !(Array.isArray(val) && val.length === 0)
     ) {
       obj[key] = val;
     }
   }
 
   /* =========================
-     Row transformation (UNCHANGED)
+     Row transformation
   ========================= */
 
   function transformRow(row, aliasCols) {
@@ -93,6 +87,7 @@
       "sources","companyUrls"
     ].forEach(f => addIfNotEmpty(o, f, getArr(f)));
 
+    /* Identity numbers */
     const ids = [];
     const type = String(o.type || "").toUpperCase();
 
@@ -120,20 +115,23 @@
 
     addIfNotEmpty(o, "identityNumbers", ids);
 
+    /* Address */
     const addr = {};
     if (!isEmpty(row["Address Line"])) addr.line = String(row["Address Line"]);
     if (!isEmpty(row.city)) addr.city = String(row.city);
     if (!isEmpty(row.province)) addr.province = String(row.province);
     if (!isEmpty(row.postCode)) addr.postCode = String(row.postCode).replace(/\.0$/, "");
-    if (!isEmpty(row.countryCode)) addr.countryCode = String(row.countryCode).toUpperCase().slice(0,2);
+    if (!isEmpty(row.countryCode)) addr.countryCode = String(row.countryCode).toUpperCase().slice(0, 2);
     if (Object.keys(addr).length) o.addresses = [addr];
 
+    /* Aliases */
     const aliases = [];
     aliasCols.forEach(c => {
       if (!isEmpty(row[c])) aliases.push({ name: String(row[c]), type: "Also Known As" });
     });
     addIfNotEmpty(o, "aliases", aliases);
 
+    /* Lists */
     const lists = [];
     for (let i = 1; i <= 4; i++) {
       if (isEmpty(row[`List ${i}`])) continue;
@@ -155,10 +153,10 @@
   }
 
   /* =========================
-     File processing (UX FIXED)
+     File processing
   ========================= */
 
-  async function processExcel(file, output, downloadLink) {
+  async function processExcel(file) {
     try {
       output.textContent = "⏳ Processing file...";
       downloadLink.style.display = "none";
@@ -173,20 +171,21 @@
         return;
       }
 
-      const aliasCols = Object.keys(rows[0])
+      const aliasCols = Object.keys(rows[0] || {})
         .filter(c => c.startsWith("aliases") && /^\d+$/.test(c.slice(7)));
 
-      const transformed = rows
+      const records = rows
         .map(r => transformRow(r, aliasCols))
-        .filter(obj => Object.keys(obj).length > 0);
+        .filter(r => Object.keys(r).length > 0);
 
-      if (!transformed.length) {
+      if (!records.length) {
         output.textContent = "⚠️ No valid rows found for conversion.";
         return;
       }
 
-      const jsonl = transformed.map(r => JSON.stringify(r)).join("\n");
+      const jsonl = records.map(r => JSON.stringify(r)).join("\n");
 
+      /* Preview (consistent with other tool) */
       output.textContent =
         jsonl.slice(0, 4000) +
         (jsonl.length > 4000 ? "\n\n...preview truncated..." : "");
@@ -201,15 +200,8 @@
 
     } catch (err) {
       console.error(err);
-      output.textContent = "❌ Error while processing file: " + err.message;
+      output.textContent = "❌ Error: " + err.message;
       downloadLink.style.display = "none";
     }
   }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-
-})();
+});
