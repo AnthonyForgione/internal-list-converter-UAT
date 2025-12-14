@@ -95,24 +95,28 @@ document.addEventListener("DOMContentLoaded", () => {
       addIfNotEmpty(o, f, cleanAndSplit(normalizedRow[f]));
     });
 
-    // Identity numbers (normalized match)
-    const identityMap = {
-      "nationaltaxno": "tax_no",
-      "dunsnumber": "duns",
-      "legalentityidentifierlei": "lei",
-      "nationalid": "national_id",
-      "drivinglicenceno": "driving_licence",
-      "socialsecurityno": "ssn",
-      "passportno": "passport_no"
-    };
-
+    // Identity numbers (robust normalized detection)
     const ids = [];
-    Object.entries(identityMap).forEach(([key, idType]) => {
-      const val = Object.entries(row).find(([col, value]) => {
-        return normalizeKey(col) === key;
-      })?.[1];
+    Object.entries(row).forEach(([col, val]) => {
+      if (isEmpty(val)) return;
 
-      if (!isEmpty(val)) ids.push({ type: idType, value: String(val) });
+      const normCol = normalizeKey(col);
+
+      if (normCol.includes("duns")) {
+        ids.push({ type: "duns", value: String(val) });
+      } else if (normCol.includes("passport")) {
+        ids.push({ type: "passport_no", value: String(val) });
+      } else if (normCol.includes("nationaltax")) {
+        ids.push({ type: "tax_no", value: String(val) });
+      } else if (normCol.includes("lei")) {
+        ids.push({ type: "lei", value: String(val) });
+      } else if (normCol.includes("nationalid")) {
+        ids.push({ type: "national_id", value: String(val) });
+      } else if (normCol.includes("drivinglicence")) {
+        ids.push({ type: "driving_licence", value: String(val) });
+      } else if (normCol.includes("socialsecurity")) {
+        ids.push({ type: "ssn", value: String(val) });
+      }
     });
     addIfNotEmpty(o, "identityNumbers", ids);
 
