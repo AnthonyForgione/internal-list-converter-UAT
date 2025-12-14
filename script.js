@@ -95,22 +95,23 @@ document.addEventListener("DOMContentLoaded", () => {
       addIfNotEmpty(o, f, cleanAndSplit(normalizedRow[f]));
     });
 
-    // Identity numbers (using exact Excel column names)
+    // Identity numbers (normalized match)
     const identityMap = {
-      "National Tax No.": "tax_no",
-      "DUNS Number": "duns",
-      "Duns Number": "duns",              // match your sheet
-      "Legal Entity Identifier (LEI)": "lei",
-      "National ID": "national_id",
-      "Driving Licence No.": "driving_licence",
-      "Social Security No.": "ssn",
-      "Passport No.": "passport_no",      // keep both variants
-      "Passport No": "passport_no"
+      "nationaltaxno": "tax_no",
+      "dunsnumber": "duns",
+      "legalentityidentifierlei": "lei",
+      "nationalid": "national_id",
+      "drivinglicenceno": "driving_licence",
+      "socialsecurityno": "ssn",
+      "passportno": "passport_no"
     };
 
     const ids = [];
-    Object.entries(identityMap).forEach(([colName, idType]) => {
-      const val = row[colName]; // use raw row, not normalized
+    Object.entries(identityMap).forEach(([key, idType]) => {
+      const val = Object.entries(row).find(([col, value]) => {
+        return normalizeKey(col) === key;
+      })?.[1];
+
       if (!isEmpty(val)) ids.push({ type: idType, value: String(val) });
     });
     addIfNotEmpty(o, "identityNumbers", ids);
