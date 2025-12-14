@@ -13,13 +13,12 @@ document.addEventListener("DOMContentLoaded", () => {
       output.textContent = "❌ Please select an Excel file first.";
       return;
     }
-
     processExcel(fileInput.files[0]);
   });
 
   /* =========================
      Utilities
-  ========================== */
+  ========================= */
 
   function isEmpty(value) {
     if (value === null || value === undefined) return true;
@@ -28,125 +27,137 @@ document.addEventListener("DOMContentLoaded", () => {
       const v = value.trim().toLowerCase();
       return v === "" || v === "nan";
     }
-    if (Array.isArray(value)) return value.length === 0;
+    if (Array.isArray(value) && value.length === 0) return true;
     return false;
   }
 
   function parsePartialDate(value) {
     if (isEmpty(value)) return null;
-    const str = String(value).trim();
+    let str = String(value).trim();
+    // Handle Excel dates stored as numbers
+    if (!isNaN(str) && Number(str) > 30) {
+      const d = new Date(Math.round((Number(str) - 25569)*86400*1000));
+      str = d.toISOString().slice(0,10);
+    }
     // Match YYYY or YYYY-MM or YYYY-MM-DD
-    const match = str.match(/^(\d{4})(?:[-\/](\d{1,2}))?(?:[-\/](\d{1,2}))?$/);
-    if (!match) return str; // not a date, return as-is
-    const year = match[1];
-    const month = match[2] ? match[2].padStart(2,'0') : null;
-    const day = match[3] ? match[3].padStart(2,'0') : null;
-    return [year, month, day].filter(Boolean).join('-');
+    const match = str.match(/^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/);
+    if (!match) return str;
+    const [_, y, m, d] = match;
+    if (y && m && d) return `${y}-${m}-${d}`;
+    if (y && m) return `${y}-${m}`;
+    return y;
   }
 
   function cleanAndSplit(value) {
     if (isEmpty(value)) return [];
+    const parsedDate = parsePartialDate(value);
+    if (parsedDate) return [parsedDate];
     if (typeof value === "string") {
       if (value.includes(",")) return value.split(",").map(v => v.trim()).filter(Boolean);
       if (value.includes(";")) return value.split(";").map(v => v.trim()).filter(Boolean);
       return [value.trim()];
     }
-    return [String(value)];
+    return [value];
   }
 
   function addIfNotEmpty(obj, key, val) {
-    if (val !== null && val !== undefined && val !== "" && !(Array.isArray(val) && !val.length)) {
-      obj[key] = val;
-    }
+    if (!isEmpty(val)) obj[key] = val;
+  }
+
+  function normalizeColName(col) {
+    if (!col) return "";
+    return String(col).trim().replace(/\t/g,'').toLowerCase();
   }
 
   /* =========================
      Row transformation
-  ========================== */
+  ========================= */
 
   function transformRow(row, aliasCols, dateCols) {
     const o = {};
 
+    // Normalize keys once
+    const normalizedRow = {};
+    Object.entries(row).forEach(([k,v]) => {
+      normalizedRow[normalizeColName(k)] = v;
+    });
+
     const getVal = c => {
-      if (isEmpty(row[c])) return null;
-      // profileId should remain text, dateCols use parsePartialDate
-      if (c === "profileId") return String(row[c]).trim();
-      if (dateCols.has(c)) return parsePartialDate(row[c]);
-      return String(row[c]).trim();
+      if (isEmpty(normalizedRow[c])) return null;
+      if (c === "profileid") return String(normalizedRow[c]).trim();
+      if (dateCols.has(c)) return parsePartialDate(normalizedRow[c]);
+      return String(normalizedRow[c]).trim();
     };
 
-    const getArr = c => cleanAndSplit(row[c]);
+    const getArr = c => cleanAndSplit(normalizedRow[c]);
 
-    // Simple fields
-    [
-      "type","profileId","action","activeStatus","name","suffix","gender",
-      "profileNotes"
-    ].forEach(f => addIfNotEmpty(o, f, getVal(f)));
+    // Basic fields
+    ["type","profileid","action","activeStatus","name","suffix","gender","profileNotes","lastModifiedDate"]
+      .forEach(f => addIfNotEmpty(o,f,getVal(f)));
 
-    // Array fields
-    [
-      "countryOfRegistrationCode","countryOfAffiliationCode",
-      "formerlySanctionedRegionCode","sanctionedRegionCode","enhancedRiskCountryCode",
-      "dateOfRegistrationArray","dateOfBirthArray","residentOfCode","citizenshipCode",
-      "sources","companyUrls"
-    ].forEach(f => addIfNotEmpty(o, f, getArr(f)));
+    ["countryofregistrationcode","countryofaffiliationcode",
+     "formerlysanctionedregioncode","sanctionedregioncode","enhancedriskcountrycode",
+     "dateofregistrationarray","dateofbirtharray","residentofcode","citizenshipcode",
+     "sources","companyurls"
+    ].forEach(f => addIfNotEmpty(o,f,getArr(f)));
 
     // Identity numbers
     const ids = [];
-    const type = String(o.type || "").toUpperCase();
+    const type = String(getVal("type") || "").toUpperCase();
 
-    const tax = getVal("National Tax No.");
+    const tax = getVal("nationaltaxno");
     if (!isEmpty(tax)) ids.push({ type: "tax_no", value: String(tax) });
 
     if (type === "COMPANY") {
-      const duns = getVal("Duns Number");
-      const lei = getVal("Legal Entity Identifier (LEI)");
+      const duns = getVal("dunsnumber");
+      const lei = getVal("legalentityidentifier(lei)");
       if (!isEmpty(duns)) ids.push({ type: "duns", value: String(duns) });
       if (!isEmpty(lei)) ids.push({ type: "lei", value: String(lei) });
     }
 
     if (type === "PERSON") {
-      [["National ID","national_id"],
-       ["Driving Licence No.","driving_licence"],
-       ["Social Security No.","ssn"],
-       ["Passport No.","passport_no"]
-      ].forEach(([c,t]) => {
-        const v = getVal(c);
+      [
+        ["nationalid","national_id"],
+        ["drivinglicenceno","driving_licence"],
+        ["socialsecurityno","ssn"],
+        ["passportno","passport_no"]
+      ].forEach(([col,t]) => {
+        const v = getVal(col);
         if (!isEmpty(v)) ids.push({ type: t, value: String(v) });
       });
     }
-    addIfNotEmpty(o, "identityNumbers", ids);
+    addIfNotEmpty(o,"identityNumbers",ids);
 
     // Address
     const addr = {};
-    if (!isEmpty(row["Address Line"])) addr.line = String(row["Address Line"]);
-    if (!isEmpty(row.city)) addr.city = String(row.city);
-    if (!isEmpty(row.province)) addr.province = String(row.province);
-    if (!isEmpty(row.postCode)) addr.postCode = String(row.postCode).replace(/\.0$/, "");
-    if (!isEmpty(row.countryCode)) addr.countryCode = String(row.countryCode).toUpperCase().slice(0,2);
-    if (Object.keys(addr).length) o.addresses = [addr];
+    if (!isEmpty(normalizedRow["addressline"])) addr.line = String(normalizedRow["addressline"]);
+    if (!isEmpty(normalizedRow["city"])) addr.city = String(normalizedRow["city"]);
+    if (!isEmpty(normalizedRow["province"])) addr.province = String(normalizedRow["province"]);
+    if (!isEmpty(normalizedRow["postcode"])) addr.postCode = String(normalizedRow["postcode"]).replace(/\.0$/,'');
+    if (!isEmpty(normalizedRow["countrycode"])) addr.countryCode = String(normalizedRow["countrycode"]).toUpperCase().slice(0,2);
+    if (Object.keys(addr).length) addIfNotEmpty(o,"addresses",[addr]);
 
     // Aliases
     const aliases = [];
     aliasCols.forEach(c => {
-      if (!isEmpty(row[c])) aliases.push({ name: String(row[c]), type: "Also Known As" });
+      if (!isEmpty(normalizedRow[c])) aliases.push({ name: String(normalizedRow[c]), type: "Also Known As" });
     });
-    addIfNotEmpty(o, "aliases", aliases);
+    addIfNotEmpty(o,"aliases",aliases);
 
     // Lists
     const lists = [];
-    for (let i=1;i<=4;i++) {
-      if (isEmpty(row[`List ${i}`])) continue;
+    for (let i=1;i<=4;i++){
+      if (isEmpty(normalizedRow[`list ${i}`])) continue;
       const e = {};
-      const v = getVal(`List ${i}`);
+      const v = getVal(`list ${i}`);
       addIfNotEmpty(e,"id",v);
       addIfNotEmpty(e,"name",v);
-      const active = String(row[`Active List ${i}`]).toLowerCase()==="true";
+      const active = String(normalizedRow[`activelist ${i}`]).toLowerCase()==="true";
       e.active = active;
       e.listActive = active;
       if (!isEmpty(v)) e.hierarchy=[{id:v,name:v}];
-      addIfNotEmpty(e,"since",getVal(`Since List ${i}`));
-      addIfNotEmpty(e,"to",getVal(`To List ${i}`));
+      addIfNotEmpty(e,"since",getVal(`since list ${i}`));
+      addIfNotEmpty(e,"to",getVal(`to list ${i}`));
       lists.push(e);
     }
     addIfNotEmpty(o,"lists",lists);
@@ -156,7 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* =========================
      File processing
-  ========================== */
+  ========================= */
 
   async function processExcel(file) {
     try {
@@ -164,19 +175,17 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw:false });
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
 
       if (!rows.length) {
-        output.textContent = "❌ No rows found in the Excel file.";
+        output.textContent = "❌ No rows found in the file.";
         downloadLink.style.display = "none";
         return;
       }
 
-      // Identify alias columns dynamically
-      const aliasCols = Object.keys(rows[0]).filter(c => c.toLowerCase().startsWith("aliases") || c.toLowerCase().startsWith("alias"));
-
-      // Identify date columns (partial dates)
-      const dateCols = new Set(Object.keys(rows[0]).filter(c => /date/i.test(c)));
+      // Detect alias columns and date columns
+      const aliasCols = Object.keys(rows[0] || {}).filter(c => normalizeColName(c).startsWith("aliases"));
+      const dateCols = new Set(Object.keys(rows[0] || {}).map(c => normalizeColName(c)).filter(c => c.includes("date")));
 
       const records = rows.map(r => transformRow(r, aliasCols, dateCols));
       const jsonl = records.map(r => JSON.stringify(r)).join("\n");
@@ -190,10 +199,11 @@ document.addEventListener("DOMContentLoaded", () => {
       downloadLink.textContent = "Download JSONL";
 
       // Preview first 4000 chars
-      output.textContent = jsonl.slice(0,4000) + (jsonl.length > 4000 ? "\n\n...preview truncated..." : "");
-    } catch (err) {
+      output.textContent = jsonl.slice(0,4000) + (jsonl.length>4000 ? "\n\n...preview truncated..." : "");
+    } catch(err) {
       output.textContent = "❌ Error: " + err.message;
       console.error(err);
     }
   }
+
 });
