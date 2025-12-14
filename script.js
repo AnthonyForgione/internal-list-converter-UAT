@@ -46,9 +46,13 @@ document.addEventListener("DOMContentLoaded", () => {
     return String(value);
   }
 
-  function normalizeKey(k) {
-    if (!k) return "";
-    return String(k).trim().toLowerCase().replace(/[^a-z0-9]/g,"");
+  // Aggressive column cleaning for identity numbers
+  function cleanColumnName(col) {
+    return String(col || "")
+      .normalize("NFKD")      // decompose Unicode characters
+      .replace(/\s+/g, "")     // remove all spaces (ASCII & Unicode)
+      .replace(/[^\w]/g, "")   // remove punctuation
+      .toLowerCase();
   }
 
   function cleanAndSplit(value) {
@@ -77,7 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const o = {};
 
-    // Keep profileId as string to avoid Excel date conversion
+    // Basic fields
     addIfNotEmpty(o, "type", normalizedRow["type"]);
     addIfNotEmpty(o, "profileId", normalizedRow["profileid"] ? String(normalizedRow["profileid"]) : null);
     addIfNotEmpty(o, "action", normalizedRow["action"]);
@@ -95,28 +99,20 @@ document.addEventListener("DOMContentLoaded", () => {
       addIfNotEmpty(o, f, cleanAndSplit(normalizedRow[f]));
     });
 
-    // Identity numbers (robust normalized detection)
+    // Identity numbers (robust detection)
     const ids = [];
     Object.entries(row).forEach(([col, val]) => {
       if (isEmpty(val)) return;
 
-      const normCol = normalizeKey(col);
+      const normCol = cleanColumnName(col);
 
-      if (normCol.includes("duns")) {
-        ids.push({ type: "duns", value: String(val) });
-      } else if (normCol.includes("passport")) {
-        ids.push({ type: "passport_no", value: String(val) });
-      } else if (normCol.includes("nationaltax")) {
-        ids.push({ type: "tax_no", value: String(val) });
-      } else if (normCol.includes("lei")) {
-        ids.push({ type: "lei", value: String(val) });
-      } else if (normCol.includes("nationalid")) {
-        ids.push({ type: "national_id", value: String(val) });
-      } else if (normCol.includes("drivinglicence")) {
-        ids.push({ type: "driving_licence", value: String(val) });
-      } else if (normCol.includes("socialsecurity")) {
-        ids.push({ type: "ssn", value: String(val) });
-      }
+      if (normCol.includes("duns")) ids.push({ type: "duns", value: String(val) });
+      else if (normCol.includes("passport")) ids.push({ type: "passport_no", value: String(val) });
+      else if (normCol.includes("nationaltax")) ids.push({ type: "tax_no", value: String(val) });
+      else if (normCol.includes("lei")) ids.push({ type: "lei", value: String(val) });
+      else if (normCol.includes("nationalid")) ids.push({ type: "national_id", value: String(val) });
+      else if (normCol.includes("drivinglicence")) ids.push({ type: "driving_licence", value: String(val) });
+      else if (normCol.includes("socialsecurity")) ids.push({ type: "ssn", value: String(val) });
     });
     addIfNotEmpty(o, "identityNumbers", ids);
 
