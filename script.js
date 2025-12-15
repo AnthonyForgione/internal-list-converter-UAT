@@ -18,39 +18,16 @@ document.addEventListener("DOMContentLoaded", () => {
   /* =========================
      Utilities
   ========================== */
-  function isEmpty(value) {
-    if (value === null || value === undefined) return true;
-    if (typeof value === "number" && isNaN(value)) return true;
-    if (typeof value === "string") {
-      const v = value.trim().toLowerCase();
-      return v === "" || v === "nan";
-    }
-    if (Array.isArray(value)) return value.length === 0;
+  function isEmpty(v) {
+    if (v === undefined || v === null) return true;
+    if (typeof v === "string" && v.trim() === "") return true;
+    if (typeof v === "number" && isNaN(v)) return true;
+    if (Array.isArray(v) && v.length === 0) return true;
     return false;
   }
 
-  function addIfNotEmpty(obj, key, value) {
-    if (!isEmpty(value)) {
-      obj[key] = value;
-    }
-  }
-
-  function parsePartialDate(value) {
-    if (isEmpty(value)) return null;
-
-    if (typeof value === "string") {
-      const t = value.trim();
-      if (/^\d{4}$/.test(t)) return t;
-      if (/^\d{4}-\d{2}$/.test(t)) return t;
-      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-      return t;
-    }
-
-    if (value instanceof Date && !isNaN(value)) {
-      return value.toISOString().slice(0, 10);
-    }
-
-    return String(value);
+  function add(obj, key, value) {
+    if (!isEmpty(value)) obj[key] = value;
   }
 
   function normalizeKey(k) {
@@ -61,12 +38,21 @@ document.addEventListener("DOMContentLoaded", () => {
       .replace(/[^\w]/g, "");
   }
 
-  function cleanAndSplit(value) {
+  function split(value) {
     if (isEmpty(value)) return [];
     return String(value)
       .split(/[,;]/)
       .map(v => v.trim())
       .filter(Boolean);
+  }
+
+  function parsePartialDate(value) {
+    if (isEmpty(value)) return undefined;
+    const t = String(value).trim();
+    if (/^\d{4}$/.test(t)) return t;
+    if (/^\d{4}-\d{2}$/.test(t)) return t;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    return t;
   }
 
   /* =========================
@@ -80,40 +66,38 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const o = {};
 
-    /* -------- Basic fields -------- */
-    addIfNotEmpty(o, "type", n.type);
-    addIfNotEmpty(o, "profileId", n.profileid ? String(n.profileid) : null);
-    addIfNotEmpty(o, "action", n.action);
-    addIfNotEmpty(o, "activeStatus", n.activestatus);
-    addIfNotEmpty(o, "name", n.name);
-    addIfNotEmpty(o, "suffix", n.suffix);
-    addIfNotEmpty(o, "profileNotes", n.profilenotes);
+    // Basic fields
+    if (!isEmpty(n.type)) o.type = n.type;
+    if (!isEmpty(n.profileid)) o.profileId = String(n.profileid);
+    if (!isEmpty(n.action)) o.action = n.action;
+    if (!isEmpty(n.activestatus)) o.activeStatus = n.activestatus;
+    if (!isEmpty(n.name)) o.name = n.name;
+    if (!isEmpty(n.suffix)) o.suffix = n.suffix;
+    if (!isEmpty(n.profilenotes)) o.profileNotes = n.profilenotes;
 
-    /* -------- Array fields -------- */
-    const arrayMap = {
-      countryOfRegistrationCode: "countryofregistrationcode",
-      countryOfAffiliationCode: "countryofaffiliationcode",
-      formerlySanctionedRegionCode: "formerlysanctionedregioncode",
-      sanctionedRegionCode: "sanctionedregioncode",
-      enhancedRiskCountryCode: "enhancedriskcountrycode",
-      dateOfRegistrationArray: "dateofregistrationarray",
-      dateOfBirthArray: "dateofbirtharray",
-      residentOfCode: "residentofcode",
-      citizenshipCode: "citizenshipcode",
-      sources: "sources",
-      companyUrls: "companyurls"
+    // Array fields (ONLY if non-empty)
+    const arrays = {
+      countryOfRegistrationCode: split(n.countryofregistrationcode),
+      countryOfAffiliationCode: split(n.countryofaffiliationcode),
+      formerlySanctionedRegionCode: split(n.formerlysanctionedregioncode),
+      sanctionedRegionCode: split(n.sanctionedregioncode),
+      enhancedRiskCountryCode: split(n.enhancedriskcountrycode),
+      dateOfRegistrationArray: split(n.dateofregistrationarray),
+      dateOfBirthArray: split(n.dateofbirtharray),
+      residentOfCode: split(n.residentofcode),
+      citizenshipCode: split(n.citizenshipcode),
+      sources: split(n.sources),
+      companyUrls: split(n.companyurls)
     };
 
-    Object.entries(arrayMap).forEach(([outKey, inKey]) => {
-      const arr = cleanAndSplit(n[inKey]);
-      if (arr.length) o[outKey] = arr;
+    Object.entries(arrays).forEach(([k, v]) => {
+      if (v.length) o[k] = v;
     });
 
-    /* -------- Identity numbers -------- */
+    // Identity numbers
     const identities = [];
     Object.entries(row).forEach(([col, val]) => {
       if (isEmpty(val)) return;
-
       const key = normalizeKey(col);
 
       if (key.includes("passportno")) identities.push({ type: "passport_no", value: String(val) });
@@ -127,27 +111,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (identities.length) o.identityNumbers = identities;
 
-    /* -------- Addresses -------- */
+    // Address
     const addr = {};
-    addIfNotEmpty(addr, "line", n.addressline);
-    addIfNotEmpty(addr, "city", n.city);
-    addIfNotEmpty(addr, "province", n.province);
-    addIfNotEmpty(addr, "postCode", n.postcode ? String(n.postcode).replace(/\.0$/, "") : null);
-    addIfNotEmpty(addr, "countryCode", n.countrycode ? String(n.countrycode).toUpperCase().slice(0, 2) : null);
+    if (!isEmpty(n.addressline)) addr.line = n.addressline;
+    if (!isEmpty(n.city)) addr.city = n.city;
+    if (!isEmpty(n.province)) addr.province = n.province;
+    if (!isEmpty(n.postcode)) addr.postCode = String(n.postcode).replace(/\.0$/, "");
+    if (!isEmpty(n.countrycode)) addr.countryCode = String(n.countrycode).toUpperCase().slice(0, 2);
 
     if (Object.keys(addr).length) o.addresses = [addr];
 
-    /* -------- Aliases -------- */
-    const aliases = [];
-    Object.keys(row).forEach(col => {
-      if (normalizeKey(col).startsWith("aliases") && !isEmpty(row[col])) {
-        aliases.push({ name: String(row[col]), type: "Also Known As" });
-      }
-    });
-
-    if (aliases.length) o.aliases = aliases;
-
-    /* -------- Lists -------- */
+    // Lists
     const lists = [];
     for (let i = 1; i <= 4; i++) {
       const name = row[`List ${i}`];
@@ -155,7 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const e = {
         id: name,
-        name: name,
+        name,
         hierarchy: [{ id: name, name }]
       };
 
@@ -180,37 +154,21 @@ document.addEventListener("DOMContentLoaded", () => {
      File processing
   ========================== */
   async function processExcel(file) {
-    try {
-      output.textContent = "⏳ Processing file...";
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: "array" });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: false });
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: undefined, raw: false });
 
-      const records = rows.map(transformRow).filter(r => Object.keys(r).length);
+    const records = rows.map(transformRow).filter(r => Object.keys(r).length);
 
-      if (!records.length) {
-        output.textContent = "❌ No valid rows found.";
-        downloadLink.style.display = "none";
-        return;
-      }
+    const jsonl = records.map(r => JSON.stringify(r)).join("\n");
 
-      const jsonl = records.map(r => JSON.stringify(r)).join("\n");
+    output.textContent = jsonl.slice(0, 4000);
+    const blob = new Blob([jsonl], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
 
-      output.textContent =
-        jsonl.slice(0, 4000) +
-        (jsonl.length > 4000 ? "\n\n...preview truncated..." : "");
-
-      const blob = new Blob([jsonl], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      downloadLink.href = url;
-      downloadLink.download = "output.jsonl";
-      downloadLink.style.display = "block";
-      downloadLink.textContent = "Download JSONL file";
-
-    } catch (err) {
-      output.textContent = "❌ Error: " + err.message;
-      console.error(err);
-    }
+    downloadLink.href = url;
+    downloadLink.download = "output.jsonl";
+    downloadLink.style.display = "block";
   }
 });
